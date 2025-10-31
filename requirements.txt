@@ -7,6 +7,7 @@ openai-whisper
 gTTS
 deep-translator
 requests
+langdetect==1.0.9
 
 # Backend & Server Framework
 fastapi
