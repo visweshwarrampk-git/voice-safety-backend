@@ -1,4 +1,9 @@
 # app_backend.py
+# --------------------------------------------------------
+# Render-optimized FastAPI backend
+# Includes all APIs: Phase 1, Phase 2, Batch Translation
+# --------------------------------------------------------
+
 from fastapi import FastAPI, UploadFile, File, Form, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +12,7 @@ import uuid
 import os
 import asyncio
 
-# Import shared core utilities
+# Import core utilities (optimized tiny Whisper + lazy embeddings)
 from core_utils import (
     transcribe_with_whisper,
     detect_scenario_hybrid,
@@ -15,14 +20,15 @@ from core_utils import (
     SCENARIOS,
 )
 
-app = FastAPI(title="Safety Incident Follow-up API (Pipeline v2)", version="1.0")
+# --------------------------------------------------------
+# APP CONFIGURATION
+# --------------------------------------------------------
+app = FastAPI(title="Safety Incident Follow-up API (Render Optimized)", version="2.0")
 
-# -----------------------------
-# CORS CONFIGURATION
-# -----------------------------
+# CORS (allow frontend access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins for flexibility
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,79 +38,63 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 SESSIONS = {}  # session_id -> dict
 
-
-# -----------------------------
-# ✅ Language Normalization Helper
-# -----------------------------
+# --------------------------------------------------------
+# HELPER: Normalize Language Codes
+# --------------------------------------------------------
 def normalize_language(lang_input: str) -> str:
-    """Convert any language input to standard code (en/ta/hi)."""
+    """Normalize language to en/ta/hi."""
     if not lang_input:
         return "en"
-
     lang_map = {
-        "en": "en",
-        "english": "en",
-        "ta": "ta",
-        "tamil": "ta",
-        "hi": "hi",
-        "hindi": "hi",
+        "en": "en", "english": "en",
+        "ta": "ta", "tamil": "ta",
+        "hi": "hi", "hindi": "hi"
     }
+    return lang_map.get(lang_input.lower(), "en")
 
-    normalized = lang_map.get(lang_input.lower())
-    if normalized:
-        return normalized
-
-    # Default fallback
-    return "en"
-
-
-# -----------------------------
-# Health Check
-# -----------------------------
+# --------------------------------------------------------
+# HEALTH CHECK
+# --------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok", "message": "Backend running"}
+    return {"status": "ok", "message": "Backend is running on Render 🚀"}
 
-
-# -----------------------------
-# Phase 1: Incident Processing
-# -----------------------------
+# --------------------------------------------------------
+# PHASE 1 — INCIDENT AUDIO PROCESSING
+# --------------------------------------------------------
 @app.post("/pipeline_phase1")
 async def pipeline_phase1(
     incident_audio: UploadFile = File(...),
     target_lang: str = Form("en"),
 ):
+    """Accept an incident audio, transcribe, translate, and detect scenario."""
     try:
         if not incident_audio:
-            return JSONResponse(
-                status_code=400, content={"error": "incident_audio file is required"}
-            )
+            return JSONResponse(status_code=400, content={"error": "incident_audio file is required"})
 
         session_id = str(uuid.uuid4())
         file_path = os.path.join(UPLOAD_DIR, f"{session_id}_{incident_audio.filename}")
 
+        # Save audio file
         file_bytes = await incident_audio.read()
         with open(file_path, "wb") as f:
             f.write(file_bytes)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
-        print(f"✅ Received audio file: {incident_audio.filename}")
-        print(f"🎯 Target language (raw): {target_lang}")
-
-        # ✅ Normalize the target language
+        print(f"✅ Audio received: {incident_audio.filename}")
         tgt_code = normalize_language(target_lang)
-        print(f"🌍 Normalized target language: {tgt_code}")
+        print(f"🌍 Target language normalized: {target_lang} -> {tgt_code}")
 
-        # Transcribe
+        # Transcribe and detect
         text, detected_lang, whisper_hint = transcribe_with_whisper(file_path)
         print(f"📝 Transcribed ({detected_lang}): {text}")
 
         translated_text = translate_text(text, detected_lang, tgt_code)
-
-        # Detect scenario
         scenario, debug = detect_scenario_hybrid(text, source_lang=detected_lang)
+
+        # If scenario not confident
         if not scenario:
-            print("⚠️ Could not confidently detect scenario.")
+            print("⚠️ Scenario not confidently detected.")
             return JSONResponse(
                 status_code=200,
                 content={
@@ -113,12 +103,12 @@ async def pipeline_phase1(
                     "detected_lang": detected_lang,
                     "translated_text": translated_text,
                     "scenario": None,
-                    "message": "Could not confidently detect scenario automatically.",
+                    "message": "Scenario not confidently detected.",
                     "debug": debug,
                 },
             )
 
-        # Translate follow-up questions
+        # Prepare translated follow-up questions
         worker_lang = detected_lang if detected_lang in ["ta", "hi", "en"] else "en"
         questions_en = SCENARIOS[scenario]["questions"]
         translated_questions = []
@@ -129,13 +119,13 @@ async def pipeline_phase1(
                 print("Translation error:", e)
                 translated_questions.append(q)
 
-        # Save session details
+        # Save session
         SESSIONS[session_id] = {
             "incident_file": file_path,
             "incident_text": text,
             "incident_lang": detected_lang,
             "translated_incident": translated_text,
-            "target_lang": tgt_code,  # ✅ Store normalized code
+            "target_lang": tgt_code,
             "scenario": scenario,
             "answers": [],
         }
@@ -152,66 +142,48 @@ async def pipeline_phase1(
         }
 
     except Exception as e:
-        print("❌ Error in pipeline_phase1:", e)
+        print("❌ Error in Phase 1:", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-
-# -----------------------------
-# Phase 2: Follow-up Answers
-# -----------------------------
+# --------------------------------------------------------
+# PHASE 2 — FOLLOW-UP ANSWERS
+# --------------------------------------------------------
 @app.post("/pipeline_phase2")
 async def pipeline_phase2(
     session_id: str = Form(...),
     followup_audios: List[UploadFile] = File(...),
     target_lang: str = Form(None),
 ):
+    """Accept follow-up answers, transcribe, translate, and summarize."""
     try:
         if session_id not in SESSIONS:
             return JSONResponse(status_code=404, content={"error": "Session not found"})
 
         sess = SESSIONS[session_id]
+        tgt_code = normalize_language(target_lang) if target_lang else sess.get("target_lang", "en")
 
-        # ✅ Use target_lang from request if available
-        if target_lang:
-            tgt_code = normalize_language(target_lang)
-            print(f"🎯 Using target_lang from request: {target_lang} -> {tgt_code}")
-            sess["target_lang"] = tgt_code
-        else:
-            print(f"⚠️ No target_lang provided in request. Using session default.")
-            tgt_code = normalize_language(sess.get("target_lang", "en"))
-
-        print(f"🌍 Translating answers to: {tgt_code}")
+        print(f"🎯 Target language for answers: {tgt_code}")
 
         answers = []
         for idx, upload in enumerate(followup_audios):
             ans_path = os.path.join(UPLOAD_DIR, f"{session_id}_ans{idx}_{upload.filename}")
-            file_bytes = await upload.read()
             with open(ans_path, "wb") as f:
-                f.write(file_bytes)
-            await asyncio.sleep(0.1)
-
-            # Ensure file is completely written
-            if not os.path.exists(ans_path) or os.path.getsize(ans_path) == 0:
-                print(f"⚠️ Skipping empty upload: {upload.filename}")
-                continue
+                f.write(await upload.read())
+            await asyncio.sleep(0.05)
 
             # Transcribe and translate
             ans_text, ans_lang, whisper_hint = transcribe_with_whisper(ans_path)
-            print(f"📝 Answer {idx} transcribed ({ans_lang}): {ans_text}")
-
-            # ✅ Translate to the correct target language
             ans_translated = translate_text(ans_text, ans_lang, tgt_code)
-            print(f"🌐 Answer {idx} translated to {tgt_code}: {ans_translated}")
 
-            answers.append(
-                {
-                    "index": idx,
-                    "original_text": ans_text,
-                    "original_lang": ans_lang,
-                    "translated_text": ans_translated,
-                    "target_lang": tgt_code,
-                }
-            )
+            print(f"🗣️ Answer {idx}: {ans_text} ({ans_lang}) -> {ans_translated} ({tgt_code})")
+
+            answers.append({
+                "index": idx,
+                "original_text": ans_text,
+                "original_lang": ans_lang,
+                "translated_text": ans_translated,
+                "target_lang": tgt_code,
+            })
 
         sess["answers"] = answers
 
@@ -223,7 +195,7 @@ async def pipeline_phase2(
             "answers": answers,
         }
 
-        print(f"✅ Processed {len(answers)} follow-up answers in {tgt_code}")
+        print(f"✅ Phase 2 complete — {len(answers)} answers processed.")
         return {
             "session_id": session_id,
             "phase": "followup_processed",
@@ -234,26 +206,32 @@ async def pipeline_phase2(
         }
 
     except Exception as e:
-        print("❌ Error in pipeline_phase2:", e)
+        print("❌ Error in Phase 2:", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-
-# -------------------------------------------------------------
-# Batch Translation
-# -------------------------------------------------------------
+# --------------------------------------------------------
+# BATCH TRANSLATION (TEXT ONLY)
+# --------------------------------------------------------
 @app.post("/translate_text_batch")
 async def translate_text_batch(data: dict = Body(...)):
-    texts: List[str] = data.get("texts", [])
-    source_lang = data.get("source_lang", "en")
-    target_lang = data.get("target_lang", "en")
-
-    # ✅ Normalize language codes
-    source_lang = normalize_language(source_lang)
-    target_lang = normalize_language(target_lang)
-
+    """Translate a batch of texts between languages."""
     try:
-        results = [translate_text(t, source_lang, target_lang) for t in texts]
-        return {"translated": results}
+        texts: List[str] = data.get("texts", [])
+        source_lang = normalize_language(data.get("source_lang", "en"))
+        target_lang = normalize_language(data.get("target_lang", "en"))
+
+        translated = [translate_text(t, source_lang, target_lang) for t in texts]
+        print(f"🌐 Batch translated {len(texts)} texts from {source_lang} -> {target_lang}")
+        return {"translated": translated}
+
     except Exception as e:
         print("❌ Batch translation error:", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+# --------------------------------------------------------
+# MAIN (Render Deployment)
+# --------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("app_backend:app", host="0.0.0.0", port=port)

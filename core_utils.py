@@ -1,48 +1,20 @@
 # core_utils.py
 # --------------------------------------------------------
-# Shared logic for Safety Incident Follow-up
-# Used by both GUI (safety_core.py) and API (app_backend.py)
+# Optimized for Render Free Plan (512MB)
+# Lightweight, no sounddevice, lazy embedding load, tiny Whisper
 # --------------------------------------------------------
 
 import os
 import time
 import uuid
 from langdetect import detect, DetectorFactory
-from sentence_transformers import SentenceTransformer, util
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-
-# playsound and sounddevice are optional on Render (headless servers)
-try:
-    from playsound import playsound
-except Exception:
-    playsound = None
-
-try:
-    import whisper
-except Exception as e:
-    # whisper must be available in production if you use transcription.
-    # Keep this import error visible during startup if missing.
-    raise
-
-# sounddevice and scipy write may not be available in the Render environment.
-# Import them defensively and provide clear fallbacks.
-try:
-    import sounddevice as sd
-except Exception:
-    sd = None
-    print("⚠️ sounddevice not available (recording features will be disabled)")
-
-try:
-    from scipy.io.wavfile import write
-except Exception:
-    write = None
-    print("⚠️ scipy.io.wavfile.write not available (writing recordings disabled)")
+import whisper
 
 # ---------------- SETTINGS ----------------
-MODEL_SIZE = "small"
+MODEL_SIZE = "tiny"  # ✅ small → tiny (fits under 512MB)
 SAMPLE_RATE = 16000
-RECORD_SECONDS = 6
 TMP_DIR = "tmp_audio"
 os.makedirs(TMP_DIR, exist_ok=True)
 
@@ -51,19 +23,10 @@ CONF_THRESHOLD = 0.48
 MIN_GAP = 0.06
 TRANSLATION_FALLBACK = True
 
-SUPPORTED_LANGS = {
-    "en": "en",
-    "ta": "ta",
-    "hi": "hi",
-    "English": "en",
-    "Tamil": "ta",
-    "Hindi": "hi"
-}
+SUPPORTED_LANGS = {"en": "en", "ta": "ta", "hi": "hi"}
 
-# Seed for langdetect reproducibility
 DetectorFactory.seed = 0
 
-# Global models
 whisper_model = None
 embedding_model = None
 scenario_embeddings = {}
@@ -111,7 +74,7 @@ SCENARIOS = {
             "Someone entered the restricted area without permission",
             "An unauthorized person crossed into the no-entry zone",
             "I saw a person in the prohibited area without ID",
-            "தடை செய்யப்பட்ட பிரதேசத்தில் ஒரு நபர் அனுமதி இல்லாமல் நுழைந்தார்",
+            "தடை செய்யப்பட்ட பகுதியில் ஒரு நபர் அனுமதி இல்லாமல் நுழைந்தார்",
             "कोई बिना अनुमति के प्रतिबंधित क्षेत्र में गया"
         ]
     }
@@ -121,64 +84,44 @@ SCENARIOS = {
 SCENARIO_KEYWORDS = {
     "fire_near_electrical_panel": [
         "fire", "smoke", "spark", "burn", "electrical", "panel", "cable",
-        "தீ", "புகை", "மின்பலகை",
-        "आग", "धुआँ", "सर्किट"
+        "தீ", "புகை", "மின்பலகை", "आग", "धुआँ", "सर्किट"
     ],
     "machine_malfunction": [
         "machine", "stopped", "jam", "noise", "malfunction", "broken",
-        "இயந்திரம்", "சத்தம்", "நிறுத்தியது",
-        "மஷின்",
+        "இயந்திரம்", "சத்தம்", "நிறுத்தியது", "மஷின்",
         "मशीन", "रुक", "जाम"
     ],
     "unauthorized_entry": [
         "restricted", "no entry", "unauthorized", "prohibited", "entered",
-        "தடை", "நுழைந்தார்", "அனுமதி",
-        "प्रतिबंधित", "प्रवेश"
+        "தடை", "நுழைந்தார்", "அனுமதி", "प्रतिबंधित", "प्रवेश"
     ]
 }
 
-# ---------------- AUDIO HELPERS ----------------
+# ---------------- HELPERS ----------------
 def safe_filename(prefix="audio", ext=".wav"):
     return os.path.join(TMP_DIR, f"{prefix}_{uuid.uuid4().hex}{ext}")
 
-
-def record_to_file(seconds=RECORD_SECONDS):
-    """
-    Record microphone audio for given seconds.
-
-    On headless environments (Render), sounddevice will be None and
-    this function will raise a RuntimeError to indicate recording is not supported.
-    """
-    if sd is None or write is None:
-        raise RuntimeError("Recording is not supported on this server (sounddevice/scipy not available).")
-
-    fname = safe_filename("rec", ".wav")
-    sd.default.samplerate = SAMPLE_RATE
-    sd.default.channels = 1
-    audio = sd.rec(int(seconds * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype='int16')
-    sd.wait()
-    write(fname, SAMPLE_RATE, audio)
-    return fname
-
 # ---------------- MODEL LOADING ----------------
 def load_models():
-    """Initialize Whisper and embedding models."""
-    global whisper_model, embedding_model, scenario_embeddings
+    """Load Whisper (tiny) model only."""
+    global whisper_model
     if whisper_model is None:
-        print("Loading Whisper model...")
+        print("Loading Whisper model (tiny)...")
         whisper_model = whisper.load_model(MODEL_SIZE)
+        print("✅ Whisper ready (tiny).")
+
+# Lazy-load embeddings only when needed
+def load_embeddings():
+    """Load sentence transformer only when required."""
+    global embedding_model, scenario_embeddings
     if embedding_model is None:
-        print("Loading embedding model...")
-        embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-    if not scenario_embeddings:
-        print("Precomputing scenario embeddings...")
+        from sentence_transformers import SentenceTransformer, util
+        print("⚙️ Loading lightweight embedding model (MiniLM-L3-v2)...")
+        embedding_model = SentenceTransformer("paraphrase-MiniLM-L3-v2")
         for key, data in SCENARIOS.items():
             examples = data.get("examples", [])
             scenario_embeddings[key] = embedding_model.encode(examples, convert_to_tensor=True)
-    print("✅ Models ready.")
-
-# Load in background when imported (keeps behavior consistent with earlier code)
-load_models()
+    return embedding_model
 
 # ---------------- LANGUAGE DETECTION ----------------
 def detect_language_improved(text, whisper_hint=None):
@@ -200,32 +143,18 @@ def detect_language_improved(text, whisper_hint=None):
     except:
         ld = "en"
 
-    if script_best == 'hi' and script_conf > 0.25:
-        final = 'hi'
-    else:
-        final = script_best if script_conf > 0.25 else ld
-
-    if whisper_hint:
-        if whisper_hint.lower() in ["ur", "ar"]:
-            whisper_hint = "hi"
-        if whisper_hint in ["ta", "hi", "en"]:
-            if script_conf < 0.10 or whisper_hint == script_best:
-                final = whisper_hint
-            elif whisper_hint == "hi" and final not in ["ta"]:
-                final = "hi"
-
-    if final == "ur":
-        final = "hi"
-
+    final = script_best if script_conf > 0.25 else ld
+    if whisper_hint and whisper_hint in ["ta", "hi", "en"]:
+        final = whisper_hint
     return final
 
 # ---------------- TRANSCRIPTION ----------------
 def transcribe_with_whisper(file_path):
-    """Transcribe an audio file with Whisper and detect language."""
+    """Transcribe audio file using Whisper tiny model."""
     global whisper_model
     if whisper_model is None:
         load_models()
-    res = whisper_model.transcribe(file_path, language=None, fp16=False)
+    res = whisper_model.transcribe(file_path, fp16=False)
     text = res.get("text", "").strip()
     whisper_lang = res.get("language", "en")
     detected = detect_language_improved(text, whisper_hint=whisper_lang)
@@ -233,29 +162,18 @@ def transcribe_with_whisper(file_path):
 
 # ---------------- TRANSLATION ----------------
 def translate_text(src_text, src_lang, tgt_lang):
-    """Translate text using GoogleTranslator."""
     try:
-        translator = GoogleTranslator(source=src_lang if src_lang else "auto", target=tgt_lang)
-        return translator.translate(src_text)
+        return GoogleTranslator(source=src_lang or "auto", target=tgt_lang).translate(src_text)
     except Exception as e:
         print("Translate error:", e)
         return src_text
 
-# ---------------- TEXT-TO-SPEECH ----------------
+# ---------------- TTS ----------------
 def tts_and_play(text, lang_code):
-    """Convert text to speech (playback only if playsound is available)."""
     try:
         out = safe_filename("tts", ".mp3")
-        tts = gTTS(text=text, lang=lang_code)
-        tts.save(out)
-        if playsound:
-            try:
-                playsound(out)
-            except Exception as e:
-                print("Playback error (playsound):", e)
-        else:
-            # In headless environments, skip playback
-            print("Playback skipped (playsound unavailable). TTS saved to:", out)
+        gTTS(text=text, lang=lang_code).save(out)
+        print(f"TTS generated ({lang_code}): {out}")
     except Exception as e:
         print("TTS error:", e)
 
@@ -263,65 +181,23 @@ def tts_and_play(text, lang_code):
 def compute_keyword_boost(text, scenario_key):
     txt = text.lower()
     keywords = SCENARIO_KEYWORDS.get(scenario_key, [])
-    if not keywords:
-        return 0.0
-    found = 0
-    for kw in keywords:
-        if kw.lower() in txt:
-            found += 1
+    found = sum(1 for kw in keywords if kw.lower() in txt)
     return min(1.0, found / max(1, len(keywords)))
 
 def detect_scenario_hybrid(text, source_lang=None):
-    """Detect scenario using embeddings + keywords + fallback translation."""
-    global embedding_model, scenario_embeddings
-    if embedding_model is None or not scenario_embeddings:
-        load_models()
-
-    input_emb = embedding_model.encode(text, convert_to_tensor=True)
-    emb_scores = {}
-    final_scores = {}
-
-    for key, emb_set in scenario_embeddings.items():
-        sims = util.cos_sim(input_emb, emb_set)
-        emb_scores[key] = float(sims.max())
-
+    """Detect scenario using small embeddings and keywords."""
+    from sentence_transformers import util
+    emb_model = load_embeddings()
+    input_emb = emb_model.encode(text, convert_to_tensor=True)
+    emb_scores = {k: float(util.cos_sim(input_emb, v).max()) for k, v in scenario_embeddings.items()}
     kw_boosts = {k: compute_keyword_boost(text, k) for k in SCENARIOS.keys()}
-    for k in SCENARIOS.keys():
-        final_scores[k] = emb_scores.get(k, 0.0) + EMB_KEYWORD_WEIGHT * kw_boosts.get(k, 0.0)
-
+    final_scores = {k: emb_scores[k] + EMB_KEYWORD_WEIGHT * kw_boosts[k] for k in SCENARIOS.keys()}
     sorted_scores = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
     best, best_val = sorted_scores[0]
-    second_val = sorted_scores[1][1] if len(sorted_scores) > 1 else 0.0
-
-    debug = {
-        "emb_scores": emb_scores,
-        "keyword_boosts": kw_boosts,
-        "final_scores": final_scores,
-        "method": "direct"
-    }
-
-    if best_val >= CONF_THRESHOLD and (best_val - second_val) >= MIN_GAP:
-        return best, debug
-
-    # fallback: translate to English and retry
-    if TRANSLATION_FALLBACK:
-        try:
-            translated = translate_text(text, source_lang or "auto", "en")
-            input_emb2 = embedding_model.encode(translated, convert_to_tensor=True)
-            emb_scores2 = {k: float(util.cos_sim(input_emb2, v).max()) for k, v in scenario_embeddings.items()}
-            kw_boosts2 = {k: compute_keyword_boost(translated, k) for k in SCENARIOS.keys()}
-            final_scores2 = {k: emb_scores2.get(k, 0.0) + EMB_KEYWORD_WEIGHT * kw_boosts2.get(k, 0.0) for k in SCENARIOS.keys()}
-            sorted2 = sorted(final_scores2.items(), key=lambda x: x[1], reverse=True)
-            best2, best2_val = sorted2[0]
-            debug.update({
-                "fallback_emb_scores": emb_scores2,
-                "fallback_final_scores": final_scores2,
-                "fallback_translated_text": translated,
-                "method": "translated"
-            })
-            if best2_val >= CONF_THRESHOLD:
-                return best2, debug
-        except Exception as e:
-            debug["fallback_error"] = str(e)
-
-    return None, debug
+    if best_val < CONF_THRESHOLD:
+        translated = translate_text(text, source_lang or "auto", "en")
+        input_emb2 = emb_model.encode(translated, convert_to_tensor=True)
+        emb_scores2 = {k: float(util.cos_sim(input_emb2, v).max()) for k, v in scenario_embeddings.items()}
+        sorted2 = sorted(emb_scores2.items(), key=lambda x: x[1], reverse=True)
+        best, best_val = sorted2[0]
+    return best, {"final_scores": final_scores}

@@ -13,11 +13,8 @@ langdetect==1.0.9
 fastapi
 uvicorn[standard]
 
-# Frontend Interface (optional)
+# Optional Frontend
 streamlit
 
 # Multipart handling
 python-multipart
-
-# Scientific / I/O helpers
-scipy
