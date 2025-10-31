@@ -11,7 +11,7 @@ from langdetect import detect, DetectorFactory
 from sentence_transformers import SentenceTransformer, util
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-from playsound import playsound
+# from playsound import playsound  # ❌ Commented out for Render (no audio device)
 import whisper
 import sounddevice as sd
 from scipy.io.wavfile import write
@@ -210,12 +210,12 @@ def translate_text(src_text, src_lang, tgt_lang):
 
 # ---------------- TEXT-TO-SPEECH ----------------
 def tts_and_play(text, lang_code):
-    """Convert text to speech and play it."""
+    """Convert text to speech (disabled playback for Render)."""
     try:
         out = safe_filename("tts", ".mp3")
         tts = gTTS(text=text, lang=lang_code)
         tts.save(out)
-        playsound(out)
+        # playsound(out)  # ❌ Disabled for Render (no audio device)
     except Exception as e:
         print("TTS error:", e)
 

@@ -18,5 +18,3 @@ streamlit
 
 # Multipart handling
 python-multipart
-playsound==1.3.0
-
