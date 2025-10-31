@@ -11,10 +11,33 @@ from langdetect import detect, DetectorFactory
 from sentence_transformers import SentenceTransformer, util
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-# from playsound import playsound  # ❌ Commented out for Render (no audio device)
-import whisper
-import sounddevice as sd
-from scipy.io.wavfile import write
+
+# playsound and sounddevice are optional on Render (headless servers)
+try:
+    from playsound import playsound
+except Exception:
+    playsound = None
+
+try:
+    import whisper
+except Exception as e:
+    # whisper must be available in production if you use transcription.
+    # Keep this import error visible during startup if missing.
+    raise
+
+# sounddevice and scipy write may not be available in the Render environment.
+# Import them defensively and provide clear fallbacks.
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
+    print("⚠️ sounddevice not available (recording features will be disabled)")
+
+try:
+    from scipy.io.wavfile import write
+except Exception:
+    write = None
+    print("⚠️ scipy.io.wavfile.write not available (writing recordings disabled)")
 
 # ---------------- SETTINGS ----------------
 MODEL_SIZE = "small"
@@ -30,13 +53,14 @@ TRANSLATION_FALLBACK = True
 
 SUPPORTED_LANGS = {
     "en": "en",
-    "ta": "ta", 
+    "ta": "ta",
     "hi": "hi",
     "English": "en",
     "Tamil": "ta",
     "Hindi": "hi"
 }
 
+# Seed for langdetect reproducibility
 DetectorFactory.seed = 0
 
 # Global models
@@ -87,7 +111,7 @@ SCENARIOS = {
             "Someone entered the restricted area without permission",
             "An unauthorized person crossed into the no-entry zone",
             "I saw a person in the prohibited area without ID",
-            "தடை செய்யப்பட்ட பகுதியில் ஒரு நபர் அனுமதி இல்லாமல் நுழைந்தார்",
+            "தடை செய்யப்பட்ட பிரதேசத்தில் ஒரு நபர் அனுமதி இல்லாமல் நுழைந்தார்",
             "कोई बिना अनुमति के प्रतिबंधित क्षेत्र में गया"
         ]
     }
@@ -117,8 +141,17 @@ SCENARIO_KEYWORDS = {
 def safe_filename(prefix="audio", ext=".wav"):
     return os.path.join(TMP_DIR, f"{prefix}_{uuid.uuid4().hex}{ext}")
 
+
 def record_to_file(seconds=RECORD_SECONDS):
-    """Record microphone audio for given seconds."""
+    """
+    Record microphone audio for given seconds.
+
+    On headless environments (Render), sounddevice will be None and
+    this function will raise a RuntimeError to indicate recording is not supported.
+    """
+    if sd is None or write is None:
+        raise RuntimeError("Recording is not supported on this server (sounddevice/scipy not available).")
+
     fname = safe_filename("rec", ".wav")
     sd.default.samplerate = SAMPLE_RATE
     sd.default.channels = 1
@@ -144,7 +177,7 @@ def load_models():
             scenario_embeddings[key] = embedding_model.encode(examples, convert_to_tensor=True)
     print("✅ Models ready.")
 
-# Load in background when imported
+# Load in background when imported (keeps behavior consistent with earlier code)
 load_models()
 
 # ---------------- LANGUAGE DETECTION ----------------
@@ -210,12 +243,19 @@ def translate_text(src_text, src_lang, tgt_lang):
 
 # ---------------- TEXT-TO-SPEECH ----------------
 def tts_and_play(text, lang_code):
-    """Convert text to speech (disabled playback for Render)."""
+    """Convert text to speech (playback only if playsound is available)."""
     try:
         out = safe_filename("tts", ".mp3")
         tts = gTTS(text=text, lang=lang_code)
         tts.save(out)
-        # playsound(out)  # ❌ Disabled for Render (no audio device)
+        if playsound:
+            try:
+                playsound(out)
+            except Exception as e:
+                print("Playback error (playsound):", e)
+        else:
+            # In headless environments, skip playback
+            print("Playback skipped (playsound unavailable). TTS saved to:", out)
     except Exception as e:
         print("TTS error:", e)
 
