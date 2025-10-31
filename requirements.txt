@@ -1,0 +1,26 @@
+# Core ML and Audio Processing
+torch
+sentence-transformers
+openai-whisper
+
+# Audio Libraries
+scipy
+sounddevice
+playsound==1.2.2
+SpeechRecognition
+pyaudio
+
+# Utility & Translation
+gTTS
+deep-translator
+requests
+
+# Backend & Server Framework
+fastapi
+uvicorn[standard]
+
+# Optional: For testing/GUI if needed locally
+streamlit
+
+# Multipart form data
+python-multipart

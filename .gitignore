@@ -1,0 +1,32 @@
+# Virtual environments
+venv/
+venv_stable/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node modules (if any)
+node_modules/
+
+# Audio & Upload folders
+uploads/
+tmp_audio/
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Build files
+dist/
+build/
+
+# Streamlit cache
+.streamlit/
+
+# System files
+.DS_Store
+Thumbs.db
