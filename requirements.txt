@@ -3,13 +3,6 @@ torch
 sentence-transformers
 openai-whisper
 
-# Audio Libraries
-scipy
-sounddevice
-playsound==1.2.2
-SpeechRecognition
-pyaudio
-
 # Utility & Translation
 gTTS
 deep-translator
@@ -19,8 +12,8 @@ requests
 fastapi
 uvicorn[standard]
 
-# Optional: For testing/GUI if needed locally
+# Frontend Interface (optional)
 streamlit
 
-# Multipart form data
+# Multipart handling
 python-multipart
